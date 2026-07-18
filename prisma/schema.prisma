@@ -1,0 +1,35 @@
+// Metadata schema from 03_LLD/02_schema.md (SQL/Postgres version).
+//
+// THE ONE BIG IDEA of Pastebin: this table stores ONLY metadata — never the
+// paste content. The content lives in the object/blob store; here we keep just
+// the `blob_url` pointer plus small, queryable fields (owner, expiry, visibility).
+// "Small structured data -> database. Large unstructured blobs -> object storage."
+
+generator client {
+  provider = "prisma-client-js"
+  // "native" = your dev machine; the musl/OpenSSL-3 target is for the
+  // node:*-alpine container the app runs in on Kubernetes.
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Paste {
+  key           String    @id @db.VarChar(64) // 7-char Base62 key OR custom alias
+  blobUrl       String    @map("blob_url") // pointer into the object/blob store
+  sizeBytes     Int       @map("size_bytes") // uncompressed content size (bytes)
+  language      String?   @db.VarChar(32) // for client-side syntax highlighting
+  visibility    String    @default("unlisted") @db.VarChar(10) // public|unlisted|private
+  ownerId       String?   @map("owner_id") // nullable for anonymous pastes
+  createdAt     DateTime  @default(now()) @map("created_at")
+  expiresAt     DateTime? @map("expires_at") // null = never expires
+  burnAfterRead Boolean   @default(false) @map("burn_after_read")
+  viewCount     Int       @default(0) @map("view_count") // denormalized (Redis-flushed)
+
+  @@index([ownerId]) // list a user's pastes
+  @@index([expiresAt]) // find expired pastes to clean up
+  @@map("pastes")
+}

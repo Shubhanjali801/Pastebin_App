@@ -1,0 +1,6 @@
+node_modules/
+dist/
+data/
+.env
+*.log
+deploy/aws-ec2/RESTART.md

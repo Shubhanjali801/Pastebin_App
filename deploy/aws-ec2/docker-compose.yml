@@ -1,0 +1,56 @@
+# EC2 production stack for Pastebin: pulls the app image from ECR and runs it
+# alongside Postgres (metadata), Redis (cache + view counters), and a Cloudflare
+# tunnel (free public HTTPS). Paste CONTENT does NOT live here — it goes to S3
+# (BLOB_BACKEND=s3), which is the whole point of Pastebin. No inbound HTTP port is
+# needed: cloudflared connects OUTBOUND to Cloudflare.
+#
+# S3 credentials come from the EC2 instance role (ec2-pastebin) via IMDS — there are
+# no AWS keys in this file. NOTE: launch the instance with IMDSv2 hop limit 2 so the
+# containerized AWS SDK can reach the metadata service.
+name: pastebin
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: pastebin
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pastebin}
+      POSTGRES_DB: pastebin
+    volumes:
+      - pgdata:/var/lib/postgresql # metadata persists across restarts (not termination)
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pastebin"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+  app:
+    image: ${APP_IMAGE:-197002356271.dkr.ecr.ap-south-1.amazonaws.com/pastebin:latest}
+    command: sh -c "npx prisma migrate deploy && node dist/index.js"
+    environment:
+      PORT: "3000"
+      DATABASE_URL: "postgresql://pastebin:${POSTGRES_PASSWORD:-pastebin}@postgres:5432/pastebin?schema=public"
+      REDIS_URL: "redis://redis:6379"
+      BASE_URL: "${BASE_URL:-http://localhost:3000}"
+      # --- blob store: S3 (content lives here, not in Postgres) ---
+      BLOB_BACKEND: "s3"
+      S3_BUCKET: "${S3_BUCKET:-pastebin-blobs-197002356271-aps1}"
+      AWS_REGION: "${AWS_REGION:-ap-south-1}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate --url http://app:3000
+    depends_on:
+      - app
+    restart: unless-stopped
+
+volumes:
+  pgdata:

@@ -1,0 +1,37 @@
+# Explicit project name so this stays isolated from the URL shortener, which also
+# lives in an `app/` dir (the default project name would collide and share volumes).
+name: pastebin
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: pastebin_postgres
+    environment:
+      POSTGRES_USER: pastebin
+      POSTGRES_PASSWORD: pastebin
+      POSTGRES_DB: pastebin
+    ports:
+      # High host ports so this can run alongside the URL shortener without clashing.
+      - "55433:5432"
+    volumes:
+      # PG18+ stores data in a major-version subdir; mount the parent dir.
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pastebin"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: pastebin_redis
+    ports:
+      - "56380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
